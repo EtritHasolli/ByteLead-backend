@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../lib/auth.js";
-import { sendFriendRequest, respondToFriendRequest, getFriends, sendMessage, getMessages, getNotifications, markNotificationsAsRead, shareLeadsPackage } from "../db/social-queries.js";
+import { sendFriendRequest, respondToFriendRequest, getFriends, sendMessage, getMessages, getNotifications, markNotificationsAsRead, shareLeadsPackage, getReceivedSharePackages, deleteSharePackage, clearNotifications } from "../db/social-queries.js";
 
 export const friendsRouter = Router();
 
@@ -77,5 +77,32 @@ friendsRouter.post("/share", requireAuth, async (req, res) => {
     res.json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+friendsRouter.get("/packages", requireAuth, async (req, res) => {
+  try {
+    const packages = await getReceivedSharePackages((req as any).userId);
+    res.json(packages);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch share packages" });
+  }
+});
+
+friendsRouter.delete("/packages/:id", requireAuth, async (req, res) => {
+  try {
+    await deleteSharePackage((req as any).userId, req.params.id);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+friendsRouter.post("/notifications/clear", requireAuth, async (req, res) => {
+  try {
+    await clearNotifications((req as any).userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to clear notifications" });
   }
 });

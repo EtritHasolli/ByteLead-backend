@@ -109,7 +109,49 @@ export async function deleteUser(userId: string): Promise<void> {
   if (error) throw error;
 }
 
-// ─── Scrape Jobs ─────────────────────────────────────────────────────────────
+// ─── Google OAuth ─────────────────────────────────────────────────────────────
+
+export async function getUserByGoogleSub(googleSub: string): Promise<UserRow | undefined> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb.from("users").select("*").eq("google_sub", googleSub).maybeSingle();
+  if (error) throw error;
+  return (data as UserRow | null) ?? undefined;
+}
+
+export async function createGoogleUser(opts: {
+  email: string;
+  fullName: string;
+  googleSub: string;
+  avatarUrl?: string;
+}): Promise<UserRow> {
+  const sb = getSupabaseAdmin();
+  const { data: freePlan } = await sb.from("plans").select("monthly_credits").eq("key", "free").maybeSingle();
+  const freeCredits = (freePlan?.monthly_credits as number | undefined) ?? 10;
+  const isAdmin = isAdminEmail(opts.email);
+  const insert = {
+    email: opts.email.toLowerCase(),
+    full_name: opts.fullName,
+    google_sub: opts.googleSub,
+    avatar_url: opts.avatarUrl || null,
+    auth_provider: "google",
+    plan: isAdmin ? "agency" : "free",
+    role: isAdmin ? "admin" : "user",
+    credits_remaining: isAdmin ? 999999 : freeCredits,
+    credits_monthly_limit: isAdmin ? 999999 : freeCredits,
+  };
+  const { data, error } = await sb.from("users").insert(insert).select("*").single();
+  if (error) throw error;
+  return data as UserRow;
+}
+
+export async function linkGoogleSub(userId: string, googleSub: string, avatarUrl?: string): Promise<void> {
+  const sb = getSupabaseAdmin();
+  const patch: Record<string, unknown> = { google_sub: googleSub, auth_provider: "google" };
+  if (avatarUrl) patch.avatar_url = avatarUrl;
+  await sb.from("users").update(patch).eq("id", userId);
+}
+
+
 
 interface JobRow {
   id: string; user_id: string; niche: string; location: string; country: string;
@@ -154,6 +196,25 @@ export async function getScrapeJobsByUser(userId: string): Promise<ScrapeJob[]> 
 export async function deleteScrapeJob(id: string): Promise<void> {
   const sb = getSupabaseAdmin();
   await sb.from("scrape_jobs").delete().eq("id", id);
+}
+
+export async function getScrapeJob(id: string): Promise<ScrapeJob | null> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb.from("scrape_jobs").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ? rowToJob(data as JobRow) : null;
+}
+
+export async function getRecentScrapeJobs(userId: string, limit: number): Promise<ScrapeJob[]> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("scrape_jobs")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data as JobRow[]).map(rowToJob);
 }
 
 // ─── Leads ───────────────────────────────────────────────────────────────────
@@ -291,6 +352,34 @@ export async function countScrapeJobsThisMonth(userId: string): Promise<number> 
   return count ?? 0;
 }
 
+export async function countCompletedJobsThisMonth(userId: string): Promise<number> {
+  const sb = getSupabaseAdmin();
+  const { count } = await sb.from("scrape_jobs").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "completed").gte("created_at", monthStartIso());
+  return count ?? 0;
+}
+
+export async function getTopLocations(userId: string, limit: number): Promise<Array<{ location: string; count: number }>> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb.from("scrape_jobs").select("location, leads_found").eq("user_id", userId).eq("status", "completed");
+  if (error) throw error;
+  const counts = new Map<string, number>();
+  for (const r of (data as Array<{ location: string; leads_found: number }>) ?? []) {
+    counts.set(r.location, (counts.get(r.location) ?? 0) + (r.leads_found || 0));
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([location, count]) => ({ location, count }));
+}
+
+export async function getTopTags(userId: string, limit: number): Promise<Array<{ tag: string; count: number }>> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb.from("leads").select("tags").eq("user_id", userId).not("tags", "is", null);
+  if (error) throw error;
+  const counts = new Map<string, number>();
+  for (const r of (data as Array<{ tags: string[] }>) ?? []) {
+    if (Array.isArray(r.tags)) for (const tag of r.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([tag, count]) => ({ tag, count }));
+}
+
 export async function getLeadsGroupedByDate(userId: string, days = 30) {
   const sb = getSupabaseAdmin();
   const start = new Date(); start.setDate(start.getDate() - days);
@@ -324,9 +413,135 @@ export async function listAllUsers() {
   return users ?? [];
 }
 
+export async function listRecentJobs(limit = 100) {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("scrape_jobs")
+    .select("id,user_id,niche,location,status,leads_found,source,created_at,users(email)")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    ...row,
+    user_email: row.users?.email ?? null,
+    users: undefined,
+  }));
+}
+
 export async function getAllPlans(): Promise<PlanConfig[]> {
   const sb = getSupabaseAdmin();
   const { data, error } = await sb.from("plans").select("*").order("sort_order");
   if (error) throw error;
   return (data ?? []) as unknown as PlanConfig[];
 }
+
+export async function createPlan(data: {
+  key: string; label: string; price_cents: number; monthly_credits: number;
+  monthly_shares: number; max_pages: number; features: string[]; is_active: boolean; sort_order: number;
+}): Promise<void> {
+  const sb = getSupabaseAdmin();
+  const { error } = await sb.from("plans").insert(data);
+  if (error) throw error;
+}
+
+export async function deletePlan(key: string): Promise<void> {
+  const sb = getSupabaseAdmin();
+  const { error } = await sb.from("plans").delete().eq("key", key);
+  if (error) throw error;
+}
+
+export async function updatePlan(key: string, patch: {
+  label?: string; price_cents?: number; monthly_credits?: number;
+  monthly_shares?: number; max_pages?: number; features?: string[]; is_active?: boolean;
+}): Promise<void> {
+  const sb = getSupabaseAdmin();
+  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v !== undefined) update[k] = v;
+  }
+  const { error } = await sb.from("plans").update(update).eq("key", key);
+  if (error) throw error;
+}
+
+export async function getCreditsUsedThisMonth(userId: string): Promise<number> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb.from("scrape_jobs").select("credits_used").eq("user_id", userId).gte("created_at", monthStartIso());
+  if (error) throw error;
+  return ((data as Array<{ credits_used: number }>) ?? []).reduce((acc, r) => acc + (r.credits_used || 0), 0);
+}
+
+interface PlanBuckets { free: number; pro: number; agency: number; }
+
+export async function getAdminStats() {
+  const sb = getSupabaseAdmin();
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 86400_000).toISOString();
+  const fourteenDaysAgo = new Date(now.getTime() - 14 * 86400_000).toISOString();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+
+  const [
+    { count: totalUsers }, { count: newUsers7d }, { count: newUsers14d }, { count: activeUsersToday },
+    { count: totalJobs }, { count: jobsThisMonth }, { count: totalLeads },
+    { count: leadsRevealedThisMonth }, { count: revealedAllTime },
+    { data: planRows }, { data: paidUsers }, { data: signups14d }, { data: signupsAllTime }, { data: livePlans },
+  ] = await Promise.all([
+    sb.from("users").select("id", { count: "exact", head: true }),
+    sb.from("users").select("id", { count: "exact", head: true }).gte("created_at", sevenDaysAgo),
+    sb.from("users").select("id", { count: "exact", head: true }).gte("created_at", fourteenDaysAgo),
+    sb.from("users").select("id", { count: "exact", head: true }).gte("last_seen_at", todayStart),
+    sb.from("scrape_jobs").select("id", { count: "exact", head: true }),
+    sb.from("scrape_jobs").select("id", { count: "exact", head: true }).gte("created_at", monthStart),
+    sb.from("leads").select("id", { count: "exact", head: true }),
+    sb.from("leads").select("id", { count: "exact", head: true }).eq("revealed", true).gte("created_at", monthStart),
+    sb.from("leads").select("id", { count: "exact", head: true }).eq("revealed", true),
+    sb.from("users").select("plan"),
+    sb.from("users").select("plan").in("plan", ["pro", "agency"]).neq("role", "admin"),
+    sb.from("users").select("created_at,plan").gte("created_at", fourteenDaysAgo),
+    sb.from("users").select("created_at,plan"),
+    sb.from("plans").select("key,price_cents"),
+  ]);
+
+  const planMap = new Map<string, number>([["free", 0], ["pro", 0], ["agency", 0]]);
+  for (const r of (planRows as Array<{ plan: string }>) ?? []) planMap.set(r.plan, (planMap.get(r.plan) ?? 0) + 1);
+
+  const planPrice = new Map<string, number>();
+  for (const p of (livePlans as Array<{ key: string; price_cents: number }>) ?? []) planPrice.set(p.key, p.price_cents);
+  let mrr = 0;
+  for (const r of (paidUsers as Array<{ plan: string }>) ?? []) mrr += planPrice.get(r.plan) ?? 0;
+
+  const day14Map = new Map<string, PlanBuckets>();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 86400_000);
+    day14Map.set(d.toISOString().slice(0, 10), { free: 0, pro: 0, agency: 0 });
+  }
+  for (const r of (signups14d as Array<{ created_at: string; plan: string }>) ?? []) {
+    const k = r.created_at.slice(0, 10);
+    const b = day14Map.get(k);
+    if (b) (b as any)[r.plan] = ((b as any)[r.plan] ?? 0) + 1;
+  }
+  const signupsByDay14d = [...day14Map.entries()].map(([date, b]) => ({ date, ...b }));
+
+  const monthMap = new Map<string, PlanBuckets>();
+  for (const r of (signupsAllTime as Array<{ created_at: string; plan: string }>) ?? []) {
+    const k = r.created_at.slice(0, 7);
+    const b = monthMap.get(k) ?? { free: 0, pro: 0, agency: 0 };
+    (b as any)[r.plan] = ((b as any)[r.plan] ?? 0) + 1;
+    monthMap.set(k, b);
+  }
+  const signupsByMonthAllTime = [...monthMap.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).map(([month, b]) => ({ month, ...b }));
+
+  const totalLeadsNum = totalLeads ?? 0;
+  const revealedAll = revealedAllTime ?? 0;
+
+  return {
+    totalUsers: totalUsers ?? 0, newUsers7d: newUsers7d ?? 0, newUsers14d: newUsers14d ?? 0,
+    paidUsers: (paidUsers ?? []).length, mrrCents: mrr, totalJobs: totalJobs ?? 0,
+    jobsThisMonth: jobsThisMonth ?? 0, totalLeads: totalLeadsNum,
+    leadsRevealedThisMonth: leadsRevealedThisMonth ?? 0, activeUsersToday: activeUsersToday ?? 0,
+    signupsByDay14d, signupsByMonthAllTime,
+    planDistribution: [...planMap.entries()].map(([plan, count]) => ({ plan, count })),
+    revealStats: { revealed: revealedAll, unrevealed: Math.max(0, totalLeadsNum - revealedAll) },
+  };
+}
+

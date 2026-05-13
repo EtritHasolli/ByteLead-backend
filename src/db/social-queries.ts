@@ -54,7 +54,11 @@ export async function markNotificationsAsRead(userId: string) {
   const supabase = getSupabaseAdmin();
   await supabase.from("notifications").update({ is_read: true }).eq("user_id", userId).eq("is_read", false);
 }
-
+export async function clearNotifications(userId: string) {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from("notifications").delete().eq("user_id", userId);
+  if (error) throw error;
+}
 export async function sendMessage(senderId: string, receiverId: string, content: string) {
   if (!content?.trim()) throw new Error("Message cannot be empty");
   if (content.trim().length > 2000) throw new Error("Message is too long");
@@ -117,4 +121,26 @@ export async function shareLeadsPackage(senderId: string, receiverId: string, le
 
   await supabase.from("notifications").insert({ user_id: receiverId, type: "lead_share", actor_id: senderId, entity_id: pkg.id });
   return { success: true, count: successCount, packageId: pkg.id };
+}
+
+export async function getReceivedSharePackages(userId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("share_packages")
+    .select("*, sender:users!sender_id(*), leads(*)")
+    .eq("receiver_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function deleteSharePackage(userId: string, packageId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.from("share_packages").select("sender_id, receiver_id").eq("id", packageId).maybeSingle();
+  if (error) throw error;
+  if (!data || (data.sender_id !== userId && data.receiver_id !== userId)) {
+    throw new Error("Share package not found or not authorized");
+  }
+  const { error: delError } = await supabase.from("share_packages").delete().eq("id", packageId);
+  if (delError) throw delError;
 }

@@ -1,14 +1,15 @@
 import { Router } from "express";
 import { requireAuth } from "../lib/auth.js";
-import { getProfile, updateProfile } from "../db/queries.js";
+import { getProfile, updateProfile, getUserById } from "../db/queries.js";
 
 export const profileRouter = Router();
 
 profileRouter.get("/", requireAuth, async (req, res) => {
   try {
-    const profile = await getProfile((req as any).userId);
+    const userId = (req as any).userId;
+    const [profile, user] = await Promise.all([getProfile(userId), getUserById(userId)]);
     if (!profile) return res.status(404).json({ error: "Profile not found" });
-    res.json(profile);
+    res.json({ ...profile, has_password: !!user?.password_hash });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch profile" });
   }

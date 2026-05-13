@@ -2,7 +2,7 @@ import { Router } from "express";
 import { hashPassword, verifyPassword, createSessionToken, setSessionCookie, clearSessionCookie } from "../lib/auth.js";
 import { checkLoginLimit } from "../lib/rate-limit.js";
 import { loginSchema, signupSchema } from "../lib/validators.js";
-import { getUserByEmail, createUser, touchUserSeen, updateProfile, getProfile } from "../db/queries.js";
+import { getUserByEmail, createUser, touchUserSeen, updateProfile, getProfile, getUserById } from "../db/queries.js";
 import { isAdminEmail } from "../lib/supabase.js";
 import { requireAuth } from "../lib/auth.js";
 
@@ -63,9 +63,14 @@ authRouter.post("/logout", (_req, res) => {
 
 authRouter.get("/me", requireAuth, async (req, res) => {
   try {
-    const profile = await getProfile((req as any).userId);
+    const userId = (req as any).userId;
+    const [profile, user] = await Promise.all([
+      getProfile(userId),
+      getUserById(userId),
+    ]);
     if (!profile) return res.status(404).json({ error: "Profile not found" });
-    res.json(profile);
+    touchUserSeen(userId).catch(() => {});
+    res.json({ ...profile, has_password: !!user?.password_hash });
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
   }

@@ -11,6 +11,10 @@ import { friendsRouter } from "./routes/friends.js";
 import { profileRouter } from "./routes/profile.js";
 import { settingsRouter } from "./routes/settings.js";
 import { adminRouter } from "./routes/admin.js";
+import { analyticsRouter } from "./routes/analytics.js";
+import { plansRouter } from "./routes/plans.js";
+import { savedRouter } from "./routes/saved.js";
+import { googleAuthRouter } from "./routes/google-auth.js";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -25,6 +29,7 @@ app.use(cookieParser());
 
 // Routes
 app.use("/api/auth", authRouter);
+app.use("/api/auth", googleAuthRouter);   // adds /api/auth/google + /api/auth/google/callback
 app.use("/api/scrape", scrapeRouter);
 app.use("/api/leads", leadsRouter);
 app.use("/api/ai-chat", aiChatRouter);
@@ -32,6 +37,9 @@ app.use("/api/friends", friendsRouter);
 app.use("/api/profile", profileRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/analytics", analyticsRouter);
+app.use("/api/plans", plansRouter);
+app.use("/api/saved", savedRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {

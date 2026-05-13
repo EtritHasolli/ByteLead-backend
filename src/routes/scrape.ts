@@ -2,10 +2,11 @@ import { Router } from "express";
 import { requireAuth } from "../lib/auth.js";
 import { checkScrapeLimit } from "../lib/rate-limit.js";
 import { scrapeFormSchema } from "../lib/validators.js";
-import { getProfile, createScrapeJob, updateScrapeJob, insertLeads } from "../db/queries.js";
+import { getProfile, createScrapeJob, updateScrapeJob, insertLeads, getScrapeJobsByUser } from "../db/queries.js";
 import { getSupabaseAdmin } from "../lib/supabase.js";
 import type { ScraperResult, ScraperOptions } from "../scrapers/base.js";
 import { registry } from "../scrapers/registry.js";
+import { interpretSearchQuery } from "../lib/interpret-query.js";
 
 export const scrapeRouter = Router();
 
@@ -153,23 +154,29 @@ scrapeRouter.post("/", requireAuth, async (req, res) => {
   }
 });
 
-// Interpret endpoint (used by frontend to parse natural language queries)
+// Interpret endpoint — Groq AI parses natural language queries into structured params
 scrapeRouter.post("/interpret", requireAuth, async (req, res) => {
   try {
     const { query } = req.body;
-    if (!query) return res.status(400).json({ error: "query required" });
-
-    // Simple interpretation: extract niche, location, count from the query
-    const match = query.match(/^(\d+)?\s*(.+?)\s+in\s+(.+?)(?:\s+without\s+a\s+website)?$/i);
-    if (!match) return res.status(400).json({ error: "Could not parse query" });
-
-    const limit = match[1] ? parseInt(match[1]) : undefined;
-    const niche = match[2].trim();
-    const location = match[3].trim();
-    const requireNoWebsite = /without\s+a\s+website/i.test(query);
-
-    res.json({ niche, location, country: "US", maxPages: 3, minRating: 0, limit, requireNoWebsite });
+    if (!query || typeof query !== "string") return res.status(400).json({ error: "query required" });
+    const interpreted = await interpretSearchQuery(query.trim());
+    res.json(interpreted);
   } catch (err) {
-    res.status(500).json({ error: "Interpretation failed" });
+    console.error("interpret error:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : "Interpretation failed" });
   }
 });
+
+// Poll job status
+scrapeRouter.get("/:jobId", requireAuth, async (req, res) => {
+  try {
+    const userId = (req as any).userId;
+    const jobs = await getScrapeJobsByUser(userId);
+    const job = jobs.find((j) => j.id === req.params.jobId);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    res.json(job);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch job" });
+  }
+});
+

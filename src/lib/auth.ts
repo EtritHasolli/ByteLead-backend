@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import type { Request, Response, NextFunction } from "express";
+import { getProfile } from "../db/queries.js";
 
 const SESSION_COOKIE = "byteleads-session";
 
@@ -73,3 +74,18 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 export { SESSION_COOKIE };
+
+/** Express middleware: requires admin role. Must be used after requireAuth. */
+export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const userId = (req as any).userId;
+  if (!userId) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const profile = await getProfile(userId);
+  if (!profile || profile.role !== "admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  next();
+}
