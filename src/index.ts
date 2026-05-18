@@ -48,4 +48,8 @@ app.get("/api/health", (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`✅ ByteLead Backend running on http://localhost:${PORT}`);
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  console.log(`🔑 SUPABASE_SERVICE_ROLE_KEY length=${key.length} last4=${key.slice(-4)}`);
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "(missing)";
+  console.log(`🌐 NEXT_PUBLIC_SUPABASE_URL=${url}`);
 });
