@@ -44,10 +44,11 @@ export async function verifyToken(token: string): Promise<{ userId: string } | n
 }
 
 export function setSessionCookie(res: Response, token: string): void {
+  const isProd = process.env.NODE_ENV === "production";
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
     maxAge: 60 * 60 * 24 * 30 * 1000, // 30 days in ms
     path: "/",
   });
