@@ -58,9 +58,17 @@ export function clearSessionCookie(res: Response): void {
   res.clearCookie(SESSION_COOKIE, { path: "/" });
 }
 
-/** Express middleware: extracts userId from session cookie, attaches to req */
+/** Express middleware: extracts userId from session cookie or Bearer token, attaches to req */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const token = req.cookies?.[SESSION_COOKIE];
+  let token: string | undefined = req.cookies?.[SESSION_COOKIE];
+
+  if (!token) {
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.slice(7);
+    }
+  }
+
   if (!token) {
     res.status(401).json({ error: "Unauthorized" });
     return;
